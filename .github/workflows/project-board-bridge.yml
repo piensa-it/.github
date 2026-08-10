@@ -1,0 +1,116 @@
+name: Project board bridge
+
+# Central bridge: listens to organization Project V2 status changes and
+# reflects them onto the issue as `status:*` labels. When an issue moves to
+# "In progress", it dispatches the start-work orchestration on the issue's repo.
+#
+# This workflow lives in the org's .github repo and receives org-level
+# projects_v2_item events.
+
+on:
+  projects_v2_item:
+    types: [edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: board-bridge-${{ github.event.projects_v2_item.node_id }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve item, issue and status
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.ORG_AUTOMATION_TOKEN }}
+          ITEM_NODE_ID: ${{ github.event.projects_v2_item.node_id }}
+          CONTENT_TYPE: ${{ github.event.projects_v2_item.content_type }}
+        run: |
+          set -euo pipefail
+
+          # Only act on Issues (ignore draft items and PRs for now)
+          if [ "$CONTENT_TYPE" != "Issue" ]; then
+            echo "Not an issue item ($CONTENT_TYPE), skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Query the item: its issue (repo, number) and its Status field value
+          resp=$(gh api graphql -f query='
+            query($id: ID!) {
+              node(id: $id) {
+                ... on ProjectV2Item {
+                  content {
+                    ... on Issue {
+                      number
+                      repository { name owner { login } }
+                    }
+                  }
+                  fieldValueByName(name: "Status") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name }
+                  }
+                }
+              }
+            }' -f id="$ITEM_NODE_ID')
+
+          number=$(echo "$resp" | jq -r '.data.node.content.number // empty')
+          repo=$(echo "$resp" | jq -r '.data.node.content.repository.name // empty')
+          owner=$(echo "$resp" | jq -r '.data.node.content.repository.owner.login // empty')
+          status=$(echo "$resp" | jq -r '.data.node.fieldValueByName.name // empty')
+
+          if [ -z "$number" ] || [ -z "$repo" ] || [ -z "$status" ]; then
+            echo "Missing data (number=$number repo=$repo status=$status), skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Issue $owner/$repo#$number -> status: $status"
+
+      - name: Sync status label
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.ORG_AUTOMATION_TOKEN }}
+          OWNER: ${{ steps.resolve.outputs.owner }}
+          REPO: ${{ steps.resolve.outputs.repo }}
+          NUMBER: ${{ steps.resolve.outputs.number }}
+          STATUS: ${{ steps.resolve.outputs.status }}
+        run: |
+          set -euo pipefail
+
+          # Normalize status to a label slug
+          slug=$(echo "$STATUS" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+          new_label="status:${slug}"
+
+          # Remove any existing status:* labels, then add the new one
+          current=$(gh issue view "$NUMBER" --repo "$OWNER/$REPO" --json labels \
+            --jq '.labels[].name' | grep '^status:' || true)
+          for l in $current; do
+            [ "$l" != "$new_label" ] && gh issue edit "$NUMBER" --repo "$OWNER/$REPO" --remove-label "$l" || true
+          done
+
+          # Ensure label exists (create if missing), then add
+          gh label create "$new_label" --repo "$OWNER/$REPO" --color ededed --force >/dev/null 2>&1 || true
+          gh issue edit "$NUMBER" --repo "$OWNER/$REPO" --add-label "$new_label"
+          echo "Applied $new_label"
+
+      - name: Dispatch start-work when In progress
+        if: steps.resolve.outputs.skip != 'true' && steps.resolve.outputs.status == 'In progress'
+        env:
+          GH_TOKEN: ${{ secrets.ORG_AUTOMATION_TOKEN }}
+          OWNER: ${{ steps.resolve.outputs.owner }}
+          REPO: ${{ steps.resolve.outputs.repo }}
+          NUMBER: ${{ steps.resolve.outputs.number }}
+        run: |
+          set -euo pipefail
+          # Trigger the repo's own start-work workflow via repository_dispatch
+          gh api "repos/$OWNER/$REPO/dispatches" \
+            -f event_type="start-work" \
+            -F client_payload[issue_number]="$NUMBER"
+          echo "Dispatched start-work for $OWNER/$REPO#$NUMBER"
