@@ -1,0 +1,64 @@
+name: "📋 Spec / Historia de Usuario"
+description: "Especificación lista para desarrollo (humano o agente)."
+title: "<título corto y accionable>"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Completa esta spec antes de mover el issue a **Ready**.
+        Recuerda asignar el **Type** (Feature / Bug / Task) en el panel derecho.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto
+      description: ¿Por qué existe este trabajo? ¿Qué problema resuelve o qué valor aporta?
+      placeholder: Como <rol> quiero <capacidad> para <beneficio>.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Criterios de aceptación
+      description: Checklist de lo que significa "terminado". Cada punto debe ser verificable.
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: technical
+    attributes:
+      label: Notas técnicas
+      description: Restricciones, áreas/archivos afectados, dependencias, decisiones de diseño.
+      placeholder: |
+        - Afecta: src/...
+        - Depende de: #<issue>
+        - Consideraciones: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Fuera de alcance
+      description: Qué NO cubre este issue, para evitar scope creep.
+      placeholder: Este issue no incluye ...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: agent-eligible
+    attributes:
+      label: ¿Elegible para desarrollo por agente?
+      description: Si es Sí, al pasar a "In progress" el agente local intentará implementarlo.
+      options:
+        - "Sí"
+        - "No — solo humano"
+      default: 0
+    validations:
+      required: true
