@@ -1,0 +1,53 @@
+name: Reusable — PR metadata
+
+# Validates that the PR title follows Conventional Commits and the branch
+# follows the Piensa IT naming standard. Canonized from app-ui's validator.
+# Blocking: a malformed PR title or branch fails the gate.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Branch & PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Validate PR metadata
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.head_ref }}
+        run: |
+          cat > /tmp/validate.mjs <<'EOF'
+          const title = process.env.PR_TITLE ?? "";
+          const branch = process.env.PR_BRANCH ?? "";
+
+          // Conventional Commits for the PR title
+          const titlePattern =
+            /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .{3,}$/;
+
+          // Branch: <prefix>/<project>-<issue>-<slug>, also accepts app-ui's
+          // shorter <type>/<issue>-<slug>. Both `feature/` and `feat/` allowed
+          // during transition. Automated branches (dependabot/renovate) exempt.
+          const branchPattern =
+            /^(feature|feat|fix|docs|refactor|perf|test|build|ci|chore|release|hotfix)\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
+          const automatedBranch = /^(dependabot|renovate)\//.test(branch);
+
+          const errors = [];
+          if (!titlePattern.test(title)) {
+            errors.push(`PR title must follow Conventional Commits. Received: "${title}"`);
+          }
+          if (!automatedBranch && !branchPattern.test(branch)) {
+            errors.push(`Branch must follow <prefix>/<project>-<issue>-<slug>. Received: "${branch}"`);
+          }
+          if (errors.length) {
+            console.error(errors.join("\n"));
+            process.exit(1);
+          }
+          console.log(`PR metadata verified: ${branch} -> ${title}`);
+          EOF
+          node /tmp/validate.mjs

@@ -1,0 +1,96 @@
+name: Reusable — Quality Gate
+
+# The standard Piensa IT quality gate. Consumed by each repo's wrapper.
+# Parametrized so each repo declares its stack while sharing one standard.
+# See docs/QUALITY_GATE.md for the full policy.
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        type: string
+        default: "22"
+      install_command:
+        description: "Install command (repos with peer-dep quirks override this)"
+        type: string
+        default: "npm ci"
+      lint_blocking:
+        description: "If false, lint runs but does not fail the gate (legacy debt)"
+        type: boolean
+        default: true
+      run_build:
+        type: boolean
+        default: true
+      build_command:
+        type: string
+        default: "npm run build"
+      coverage_command:
+        description: "Test command that enforces coverage thresholds"
+        type: string
+        default: "npm run test:coverage"
+    secrets:
+      NPM_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: quality-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Lint, types, coverage, build
+    runs-on: ubuntu-latest
+    steps:
+      # Third-party actions pinned to a 40-char commit SHA (not a mutable tag).
+      # A tag like @v6 can be re-pointed by the action owner without notice,
+      # enabling supply-chain attacks (Semgrep rule: mutable-action-tag).
+      # Dependabot bumps the SHA via the `# vX.Y.Z` comment.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: ${{ inputs.install_command }}
+        env:
+          # GitHub Packages token for the @piensa-it scope. The repo's .npmrc
+          # reads it from this variable. Passed through workflow_call secrets.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Lint (blocking)
+        if: inputs.lint_blocking
+        run: npm run lint
+
+      - name: Lint (informational)
+        if: ${{ !inputs.lint_blocking }}
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests + coverage floor
+        run: ${{ inputs.coverage_command }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Build
+        if: inputs.run_build
+        run: ${{ inputs.build_command }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: ignore
