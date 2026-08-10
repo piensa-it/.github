@@ -1,19 +1,23 @@
 name: Reusable — Security
 
 # Standard DevSecOps baseline: secret scanning (Gitleaks) + SAST (Semgrep).
-# Canonizes the pattern from app-misfin. Free tools only; no paid account.
-# CodeQL is intentionally omitted (free only on public repos; private repos
-# would need GitHub Advanced Security). See docs/QUALITY_GATE.md.
+# Free tools only. CodeQL omitted (free only on public repos).
+#
+# NOTE: we run the Gitleaks *binary* directly, NOT gitleaks/gitleaks-action.
+# The official action requires a paid GITLEAKS_LICENSE for org-owned repos;
+# the binary itself is free and unrestricted. The binary auto-detects a
+# .gitleaks.toml at the repo root for per-repo allowlists.
 
 on:
   workflow_call:
     inputs:
+      gitleaks_version:
+        type: string
+        default: "8.30.1"
       semgrep_configs:
-        description: "Space-separated Semgrep rulesets"
         type: string
         default: "--config=p/default --config=p/typescript --config=p/react"
       semgrep_exclude_rules:
-        description: "Optional --exclude-rule flags"
         type: string
         default: ""
 
@@ -26,13 +30,36 @@ jobs:
     name: Secret scanning (Gitleaks)
     runs-on: ubuntu-latest
     steps:
-      # SHA-pinned (see quality-gate comment on mutable tags).
+      # SHA-pinned (mutable tags can be re-pointed; supply-chain defense).
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+
+      - name: Install Gitleaks binary
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.gitleaks_version }}
+        run: |
+          set -euo pipefail
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Run Gitleaks
+        run: |
+          set -euo pipefail
+          # Auto-detects .gitleaks.toml at repo root if present.
+          gitleaks detect --source . --no-banner --redact --exit-code 1 \
+            --report-format sarif --report-path gitleaks.sarif
+
+      - name: Upload SARIF report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: gitleaks-sarif
+          path: gitleaks.sarif
+          retention-days: 14
+          if-no-files-found: ignore
 
   semgrep:
     name: SAST (Semgrep)
