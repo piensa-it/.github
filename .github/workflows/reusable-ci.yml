@@ -1,0 +1,81 @@
+name: Reusable — CI checks
+
+# Reusable CI for Node/Next/TypeScript repos.
+# Detects available npm scripts and runs only those that exist, so a repo
+# without a "test" script won't fail the pipeline.
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version"
+        required: false
+        type: string
+        default: "20"
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Detect package manager and install
+        id: install
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            echo "No package.json, skipping JS checks."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Lint
+        if: steps.install.outputs.skip != 'true'
+        run: |
+          if npm run | grep -qE '^\s*lint'; then
+            npm run lint
+          else
+            echo "No lint script, skipping."
+          fi
+
+      - name: Typecheck
+        if: steps.install.outputs.skip != 'true'
+        run: |
+          if npm run | grep -qE '^\s*typecheck'; then
+            npm run typecheck
+          elif [ -f tsconfig.json ]; then
+            npx --yes tsc --noEmit || echo "tsc reported issues (non-blocking until configured)."
+          else
+            echo "No TypeScript config, skipping."
+          fi
+
+      - name: Test
+        if: steps.install.outputs.skip != 'true'
+        run: |
+          if npm run | grep -qE '^\s*test'; then
+            npm test
+          else
+            echo "No test script, skipping."
+          fi
+
+      - name: Build
+        if: steps.install.outputs.skip != 'true'
+        run: |
+          if npm run | grep -qE '^\s*build'; then
+            npm run build
+          else
+            echo "No build script, skipping."
+          fi

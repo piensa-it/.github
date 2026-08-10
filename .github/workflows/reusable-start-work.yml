@@ -1,0 +1,125 @@
+name: Reusable — Start work from issue
+
+# Reusable workflow: creates a branch (named by issue type) and a draft PR.
+# Called by each repo's lightweight wrapper when an issue enters "In progress".
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        required: true
+        type: number
+      project_slug:
+        description: "Short project name used in the branch (e.g. misfin, lynx)"
+        required: true
+        type: string
+    secrets:
+      token:
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  start-work:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.token }}
+          fetch-depth: 0
+
+      - name: Resolve issue type and build branch name
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.token }}
+          ISSUE: ${{ inputs.issue_number }}
+          PROJECT: ${{ inputs.project_slug }}
+        run: |
+          set -euo pipefail
+
+          # Fetch issue: title and native issue type
+          data=$(gh issue view "$ISSUE" --json title,issueType 2>/dev/null || echo '{}')
+          title=$(echo "$data" | jq -r '.title // "untitled"')
+          type=$(echo "$data" | jq -r '.issueType.name // "Task"')
+
+          # Map issue type -> branch prefix
+          case "$type" in
+            Feature) prefix="feature" ;;
+            Bug)     prefix="fix" ;;
+            *)       prefix="chore" ;;
+          esac
+
+          # Slugify title: lowercase, strip accents, non-alnum -> dash, trim
+          slug=$(echo "$title" \
+            | iconv -f utf8 -t ascii//TRANSLIT 2>/dev/null \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
+            | cut -c1-50)
+
+          branch="${prefix}/${PROJECT}-${ISSUE}-${slug}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "Branch: $branch"
+
+      - name: Create branch if it does not exist
+        env:
+          GH_TOKEN: ${{ secrets.token }}
+          BRANCH: ${{ steps.meta.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "Branch already exists, skipping creation."
+          else
+            git checkout -b "$BRANCH"
+            # Empty commit so the branch has a ref and a PR can be opened
+            git commit --allow-empty -m "chore: start work on #${{ inputs.issue_number }}"
+            git push origin "$BRANCH"
+          fi
+
+      - name: Create draft PR if none exists
+        env:
+          GH_TOKEN: ${{ secrets.token }}
+          BRANCH: ${{ steps.meta.outputs.branch }}
+          PREFIX: ${{ steps.meta.outputs.prefix }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          ISSUE: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+
+          existing=$(gh pr list --head "$BRANCH" --json number --jq 'length')
+          if [ "$existing" != "0" ]; then
+            echo "PR already exists for $BRANCH, skipping."
+            exit 0
+          fi
+
+          # Conventional Commit type from prefix
+          case "$PREFIX" in
+            feature) cc="feat" ;;
+            fix)     cc="fix" ;;
+            *)       cc="chore" ;;
+          esac
+
+          gh pr create \
+            --draft \
+            --base main \
+            --head "$BRANCH" \
+            --title "${cc}: ${TITLE}" \
+            --body "$(cat <<EOF
+## Resumen
+
+Automated draft PR for issue #${ISSUE}.
+
+## Issue relacionado
+
+Closes #${ISSUE}
+
+---
+> Draft creado automáticamente. Invoca el agente con \`/claude\` en el issue
+> para implementar, o desarrolla manualmente en la rama \`${BRANCH}\`.
+EOF
+)"

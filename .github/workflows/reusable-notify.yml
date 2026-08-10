@@ -1,0 +1,59 @@
+name: Reusable — Notify
+
+# Reusable notifications. GitHub already emails assignees, authors and
+# participants natively on issue/PR activity (per each user's notification
+# settings). This workflow adds explicit @-mentions to the issue creator and
+# assignee at key transitions, which triggers GitHub's own email delivery
+# without needing an SMTP server or extra secrets.
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        required: true
+        type: number
+      event:
+        description: "Human-readable event, e.g. 'PR ready for review'"
+        required: true
+        type: string
+    secrets:
+      token:
+        required: true
+
+permissions:
+  issues: write
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment with mentions
+        env:
+          GH_TOKEN: ${{ secrets.token }}
+          ISSUE: ${{ inputs.issue_number }}
+          EVENT: ${{ inputs.event }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          data=$(gh issue view "$ISSUE" --repo "$REPO" \
+            --json author,assignees 2>/dev/null || echo '{}')
+          author=$(echo "$data" | jq -r '.author.login // empty')
+          assignees=$(echo "$data" | jq -r '.assignees[].login // empty')
+
+          mentions=""
+          [ -n "$author" ] && mentions="@$author"
+          for a in $assignees; do
+            # avoid duplicate mention if assignee == author
+            if [ "$a" != "$author" ]; then
+              mentions="$mentions @$a"
+            fi
+          done
+
+          if [ -z "$mentions" ]; then
+            echo "No author/assignee to notify."
+            exit 0
+          fi
+
+          gh issue comment "$ISSUE" --repo "$REPO" --body \
+            "🔔 **${EVENT}** — ${mentions}"
