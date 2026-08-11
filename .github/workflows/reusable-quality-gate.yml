@@ -29,11 +29,12 @@ on:
         type: string
         default: "npm run test:coverage"
     secrets:
-      NPM_TOKEN:
+      PACKAGES_TOKEN:
         required: false
 
 permissions:
   contents: read
+  packages: read
   pull-requests: read
 
 concurrency:
@@ -61,7 +62,7 @@ jobs:
         env:
           # GitHub Packages token for the @piensa-it scope. The repo's .npmrc
           # reads it from this variable. Passed through workflow_call secrets.
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
 
       - name: Lint (blocking)
         if: inputs.lint_blocking
@@ -78,13 +79,13 @@ jobs:
       - name: Tests + coverage floor
         run: ${{ inputs.coverage_command }}
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
 
       - name: Build
         if: inputs.run_build
         run: ${{ inputs.build_command }}
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
 
       - name: Upload coverage report
         if: always()
