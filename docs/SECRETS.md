@@ -16,6 +16,8 @@ framework change.
 | `NETLIFY_SITE_ID`     | Netlify site UUID                          | per-repo     |
 | `BACKEND_URL`         | Backend/API base URL (public)              | per-repo     |
 | `BACKEND_PUBLIC_KEY`  | Backend publishable/anon key (public)      | per-repo     |
+| `PAYMENTS_PUBLIC_KEY` | Payment processor publishable key (public) | per-repo     |
+| `ERROR_TRACKING_DSN`  | Error tracker ingest DSN (public)          | per-repo     |
 
 ### Which scope, and why
 
@@ -52,35 +54,42 @@ e2e:
     BACKEND_PUBLIC_KEY: ${{ secrets.BACKEND_PUBLIC_KEY }}
 ```
 
-### Explicit list vs. `secrets: inherit`
+### Always an explicit list. Never `secrets: inherit`
 
 The reusable workflows resolve the map's right-hand side out of
 `toJSON(secrets)`, because the name is a string chosen by the caller and cannot
-be resolved as a `secrets.X` expression. Both calling styles work:
-
-- **Explicit list** (above) — least privilege. The reusable only ever sees the
-  secrets named. Limited to the names declared in the reusable's
-  `on.workflow_call.secrets`.
-- **`secrets: inherit`** — the caller passes everything it has, so the map can
-  reference *any* secret name without a PR against this repository. This is what
-  keeps the map genuinely parametric: a new project variable is a line in the
-  wrapper.
-
-Prefer the explicit list when the standard names are enough. Use `inherit` when
-a repo has project-specific build variables — and understand what it means: the
-reusable receives every secret in that repo. It is acceptable here because these
-workflows live in an org repository we control and never echo a value, but it is
-a real widening of scope and not the default.
-
-If the repo migrates to Next.js, only the left-hand names change:
+be resolved as a `secrets.X` expression. That works identically whether secrets
+arrive explicitly or by inheritance — so use the explicit list, always:
 
 ```yaml
-    build_env_map: |
-      NEXT_PUBLIC_SUPABASE_URL=BACKEND_URL
-      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=BACKEND_PUBLIC_KEY
+  secrets:
+    BACKEND_URL: ${{ secrets.BACKEND_URL }}
 ```
 
-The secrets themselves (`BACKEND_URL`, `BACKEND_PUBLIC_KEY`) never change.
+`secrets: inherit` hands the called workflow **every secret in the repository**,
+not the ones it uses. Semgrep blocks it
+(`yaml.github-actions.security.github-actions-secrets-inherit`) and the rule is
+right: it is a blanket grant standing in for five named ones.
+
+This is written down because the mistake was made here, on 2026-08-12, in
+`app-misfin`'s deploy wrapper, with a reason that sounded good: an explicit list
+would force a PR against this repository for every new project variable.
+
+**That reasoning conflates the two sides of `build_env_map`, and the distinction
+is worth keeping.** The LEFT side (`VITE_*`, `NEXT_PUBLIC_*`) is what varies by
+stack, and it stays free-form in each wrapper — nothing here constrains it. The
+RIGHT side is meant to be a short, stable vocabulary of tool-neutral names.
+
+So when a project seems to need a name that is not in the table above, the
+question is not "how do I widen the grant" but **"is this name tool-neutral?"**
+`STRIPE_PUBLIC_KEY` and `SENTRY_DSN` were not — they name the vendor, which this
+document has always forbidden. Renamed to `PAYMENTS_PUBLIC_KEY` and
+`ERROR_TRACKING_DSN`, they are reusable by any project, and swapping processor
+or tracker becomes one line on the left-hand side of one map.
+
+Adding a genuinely new standard name to this table is a small PR against this
+repository, and that friction is doing useful work: it is what keeps the
+vocabulary short enough to stay a standard.
 
 ## Every secret has to be set in more than one place
 
