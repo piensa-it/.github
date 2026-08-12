@@ -1,0 +1,109 @@
+# PLANTILLA — copia esto a .github/workflows/deploy.yml en tu repositorio.
+#
+# Despliegue estándar de Piensa IT: Actions construye, Netlify solo publica el
+# `dist` ya compilado. Ver docs/DEPLOY.md para el alcance, el rollback y la
+# guía de adopción completa.
+#
+# Todo lo que hay aquí es configuración de TU proyecto. Las cuatro protecciones
+# —credenciales verificadas antes de construir, variables comprobadas dentro
+# del bundle, nada que publicar si `dist` está vacío, y errores que nombran el
+# secret que falta— viven en el reusable y las heredas.
+#
+# Busca los marcadores AJUSTAR. Si borras uno sin pensarlo, el despliegue falla
+# nombrando lo que falta, que es el comportamiento buscado.
+
+name: Deploy a producción
+
+on:
+  push:
+    branches: [main]
+  # Permite relanzar sin inventar un commit vacío.
+  workflow_dispatch:
+
+# Dos merges seguidos: el segundo espera. Deploys simultáneos pueden publicarse
+# en orden inverso y dejar producción en el commit viejo.
+concurrency:
+  group: deploy-produccion
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    uses: piensa-it/.github/.github/workflows/reusable-deploy.yml@v1
+    with:
+      # AJUSTAR — tiene que ser EXACTAMENTE la misma que en quality-gate.yml.
+      # Si difieren, el commit que se prueba no es el que se publica, que es
+      # justo lo que mover el build a Actions pretende eliminar. No falla por
+      # sí sola: hay que mirarla a propósito.
+      node_version: "22"
+
+      # AJUSTAR si tu proyecto necesita flags (p. ej. --legacy-peer-deps).
+      # Debe coincidir con el de quality-gate.yml.
+      install_command: "npm ci"
+      build_command: "npm run build"
+
+      # AJUSTAR si tu bundler no publica en dist/ (Next: .next o out/).
+      publish_dir: "dist"
+
+      # NO fijes netlify_cli_version salvo que sepas lo que haces: el default
+      # del reusable ya está emparejado con el node_version por defecto. Un CLI
+      # viejo sobre un Node nuevo revienta al publicar, después de un build
+      # correcto — costó un despliegue.
+
+      environment_name: "production"
+      environment_url: "https://AJUSTAR.tu-dominio.co"
+
+      # AJUSTAR — el mapa de variables del build. Es lo que cambia en cada
+      # proyecto y lo que más falla; el paso de publicar casi nunca.
+      #
+      #   IZQUIERDA  = el nombre que espera tu bundler (VITE_*, NEXT_PUBLIC_*)
+      #   DERECHA    = el nombre estándar del secret (ver docs/SECRETS.md)
+      #
+      # Cambiar de stack toca solo la izquierda. Los secrets no se mueven.
+      build_env_map: |
+        VITE_SUPABASE_URL=BACKEND_URL
+        VITE_SUPABASE_PUBLISHABLE_KEY=BACKEND_PUBLIC_KEY
+
+      # AJUSTAR — solo las variables SIN LAS CUALES LA APP NO ARRANCA.
+      #
+      # La pregunta no es "¿es importante?" sino "¿arranca sin ella?". Las que
+      # están aquí paran el despliegue; las que están en el mapa pero no aquí
+      # solo avisan. Bloquear por una variable que apenas desactiva una función
+      # enseña a saltarse la puerta; dejar pasar una crítica publica una página
+      # en blanco con el build en verde.
+      required_build_vars: |
+        VITE_SUPABASE_URL
+        VITE_SUPABASE_PUBLISHABLE_KEY
+
+      # AJUSTAR — variables PÚBLICAS cuyo valor debe aparecer dentro del código
+      # compilado. Es una pregunta distinta de "¿existe el secret?": comprueba
+      # que el valor llegó al producto, que es lo que carga el navegador.
+      # Vite sustituye una variable vacía por cadena vacía y produce un bundle
+      # válido que revienta al arrancar.
+      #
+      # NUNCA pongas aquí un valor privado: una clave secreta no debe estar en
+      # un bundle, y afirmar que sí lo está consagraría el error.
+      bundle_assert_vars: |
+        VITE_SUPABASE_URL
+
+      # Variables del build que NO son secrets. Solo se admiten los marcadores
+      # de la lista blanca: ${GITHUB_SHA}, ${GITHUB_SHA_SHORT},
+      # ${GITHUB_REF_NAME}, ${GITHUB_RUN_ID}, ${GITHUB_RUN_NUMBER}.
+      # Cualquier otro ${...} falla el despliegue a propósito: esto acaba en un
+      # archivo JavaScript público.
+      build_env_literal: |
+        VITE_SENTRY_RELEASE=${GITHUB_SHA}
+
+    # Lista explícita, NUNCA `secrets: inherit` — Semgrep lo bloquea por
+    # mínimo privilegio y tiene razón. Si necesitas un secret que no está en
+    # docs/SECRETS.md, lo más probable es que el nombre mencione la herramienta
+    # (STRIPE_, SENTRY_) en vez de decir qué es el valor.
+    secrets:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+      BACKEND_URL: ${{ secrets.BACKEND_URL }}
+      BACKEND_PUBLIC_KEY: ${{ secrets.BACKEND_PUBLIC_KEY }}

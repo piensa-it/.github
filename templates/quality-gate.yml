@@ -1,0 +1,62 @@
+# PLANTILLA — copia esto a .github/workflows/quality-gate.yml.
+#
+# Los reusables se consumen por etiqueta `@v1`, nunca `@main`: con `@main`,
+# cualquier edición a medias del repositorio compartido llega a todos los
+# proyectos en el momento de empujarla.
+
+name: Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+  pull-requests: read
+
+jobs:
+  pr-metadata:
+    if: github.event_name == 'pull_request'
+    uses: piensa-it/.github/.github/workflows/reusable-pr-metadata.yml@v1
+
+  quality-gate:
+    uses: piensa-it/.github/.github/workflows/reusable-quality-gate.yml@v1
+    with:
+      # AJUSTAR — la MISMA que en deploy.yml. Ver el comentario de allí.
+      node_version: "22"
+      install_command: "npm ci"
+
+      # AJUSTAR — arranca en false SOLO si hay errores preexistentes, y entonces
+      # el comentario debe llevar EL NÚMERO MEDIDO Y LA FECHA. Un "hay muchos"
+      # sin cifra se vuelve permanente, porque nadie sabe si mejoró.
+      lint_blocking: true
+
+      coverage_command: "npm run test:coverage"
+      build_command: "npm run build"
+    secrets:
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+
+  security:
+    uses: piensa-it/.github/.github/workflows/reusable-security.yml@v1
+
+  e2e:
+    uses: piensa-it/.github/.github/workflows/reusable-e2e.yml@v1
+    with:
+      # AJUSTAR — pon false SOLO si el repositorio no tiene suite e2e, y
+      # ESCRIBE LA RAZÓN AQUÍ AL LADO. Este interruptor existe porque antes el
+      # job se saltaba solo cuando faltaba un secret y reportaba verde: dos
+      # jobs de Playwright dieron "éxito" en seis y nueve segundos durante
+      # semanas. Si está en true y falta algo, falla nombrando qué falta.
+      e2e_enabled: true
+      install_command: "npm ci"
+      e2e_command: "npm run e2e"
+      build_env_map: |
+        VITE_SUPABASE_URL=BACKEND_URL
+        VITE_SUPABASE_PUBLISHABLE_KEY=BACKEND_PUBLIC_KEY
+    secrets:
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+      BACKEND_URL: ${{ secrets.BACKEND_URL }}
+      BACKEND_PUBLIC_KEY: ${{ secrets.BACKEND_PUBLIC_KEY }}

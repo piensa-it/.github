@@ -122,8 +122,21 @@ Each step is verifiable. Do not batch them.
 project at one site, and the first deploy to notice would be the one that
 overwrote another product's production.
 
-**3. Write the wrapper** as `.github/workflows/deploy.yml`. Use `app-misfin`'s
-as the reference. The part that needs thought is the variable map:
+**3. Copy the templates** from `templates/` in this repository:
+
+| Template | Copy to |
+| -------- | ------- |
+| `templates/deploy.yml` | `.github/workflows/deploy.yml` |
+| `templates/quality-gate.yml` | `.github/workflows/quality-gate.yml` |
+| `templates/_redirects` | `public/_redirects` (merge if one exists) |
+
+They are commented and carry `AJUSTAR` markers on every value that is yours.
+Start from them rather than from another project: until 2026-08-12 this guide
+pointed at `app-misfin`'s wrapper, which is in a **private** repository — so
+adopting the standard silently required access to an unrelated project. That
+was a defect in the standard, found during the second adoption (`app-lynx`).
+
+The part that needs thought is the variable map:
 
 ```yaml
 build_env_map: |
@@ -149,17 +162,38 @@ Three separate questions, deliberately:
 **4. Match `node_version` to the quality gate.** Copy it across; do not
 remember it.
 
-**5. Delete whatever it replaces.** The repo's old deploy workflow, and the
-`[build]` block in `netlify.toml` — Netlify no longer builds, so that block is
+**5. Keep hashed assets out of the SPA fallback.** For a single-page app this
+is not optional, and it is the step most likely to be skipped because nothing
+fails until after a deploy.
+
+```
+/assets/*    /index.html   404      <- before the catch-all
+/*           /index.html   200
+```
+
+A catch-all alone means a chunk that no longer exists — because a deploy
+changed the hashes — returns `index.html` with status **200**. The browser asks
+for JavaScript, receives HTML with a success status, tries to execute it, and
+throws an error about MIME types that looks nothing like the cause. It reached
+production in `app-misfin`. With an honest 404 the browser emits a real
+dynamic-import failure, which an app can recognise and recover from by
+reloading once.
+
+This matters *more* as deploys get more reliable, not less: every deploy
+invalidates the chunks held by every open tab.
+
+**6. Delete whatever it replaces.** The repo's old deploy workflow, and the
+`[build]` block in `netlify.toml` if there is one (many repos have no
+`netlify.toml` at all — then this part is simply not applicable) — Netlify no longer builds, so that block is
 dead config that still has an effect (it is where the Node 20/22 divergence
 came from). Leaving both is how a repo ends up paying twice and trusting the
 wrong one.
 
-**6. Unlink Netlify from Git** (Site configuration → Build & deploy → *Unlink
+**7. Unlink Netlify from Git** (Site configuration → Build & deploy → *Unlink
 repository*). Skipping this leaves two systems deploying the same site, and the
 race is silent.
 
-**7. Deploy once, on purpose.** Merge a trivial change and watch the run. Then
+**8. Deploy once, on purpose.** Merge a trivial change and watch the run. Then
 open the site. A green pipeline is not evidence that the page loads — that is
 precisely the failure this standard exists to prevent.
 

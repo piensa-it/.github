@@ -1,0 +1,22 @@
+# PLANTILLA — copia esto a public/_redirects (o fúndelo con el que ya tengas).
+#
+# El orden importa: la primera regla que casa, gana. La de /assets va ANTES
+# del fallback de la SPA, y esa es toda la gracia.
+#
+# Sin ella, un chunk con hash que ya no existe —porque un deploy cambió los
+# hashes— cae en el catch-all y recibe el index.html con estado 200. El
+# navegador pide JavaScript, obtiene HTML con un "todo bien" e intenta
+# ejecutarlo, y lanza un error sobre el MIME type que no se parece en nada a
+# la causa real. Le pasó a app-misfin en producción.
+#
+# Con un 404 honesto el navegador emite "Failed to fetch dynamically imported
+# module", que es un error que la app puede reconocer y curar recargando.
+#
+# Los assets que SÍ existen se sirven igual: Netlify solo aplica una regla de
+# redirección cuando ningún archivo estático casa con la ruta.
+#
+# AJUSTAR la ruta si tu bundler no emite en /assets (Next usa /_next/static).
+/assets/*    /index.html   404
+
+# Fallback de la SPA para rutas de la aplicación.
+/*    /index.html   200
