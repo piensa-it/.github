@@ -68,6 +68,25 @@ on:
         type: string
         default: ""
 
+      # Newline-separated VAR=value pairs for build variables that are NOT
+      # secrets: build metadata, feature flags, the commit being shipped.
+      #
+      # A small allowlist of placeholders is substituted — ${GITHUB_SHA},
+      # ${GITHUB_SHA_SHORT}, ${GITHUB_REF_NAME}, ${GITHUB_RUN_ID},
+      # ${GITHUB_RUN_NUMBER} — and ANY other ${...} is a hard error.
+      #
+      # That restriction is the whole design. The obvious implementation is
+      # `envsubst`, which expands every variable in the environment — and the
+      # environment of this step contains the mapped secrets. A line like
+      #   VITE_ANYTHING=${NETLIFY_AUTH_TOKEN}
+      # would then bake a Netlify token into a public JavaScript bundle served
+      # to every visitor, and nothing would warn: the build would succeed and
+      # the deploy would be green. An allowlist makes that typo impossible
+      # rather than merely discouraged.
+      build_env_literal:
+        type: string
+        default: ""
+
       # BUILD_VAR names whose value must literally appear inside the compiled
       # output. A different question from "is the secret set": it verifies the
       # value reached the product. List only public values here.
@@ -281,6 +300,52 @@ jobs:
             echo "::error::${faltan} required build variable(s) are missing (listed above). Nothing was built and nothing was published."
             exit 1
           fi
+
+      # Build variables that are not secrets. Separate step from the secret
+      # mapping on purpose: these are safe to echo, and keeping them apart
+      # means a failure here can never be confused with a missing credential.
+      - name: Add literal build vars
+        if: inputs.build_env_literal != ''
+        env:
+          BUILD_ENV_LITERAL: ${{ inputs.build_env_literal }}
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r linea; do
+            [ -z "${linea// }" ] && continue
+
+            case "$linea" in
+              *=*) ;;
+              *)
+                echo "::error::build_env_literal has a malformed line: '$linea'. Expected VAR=value."
+                exit 1
+                ;;
+            esac
+
+            var="$(echo "${linea%%=*}" | tr -d '[:space:]')"
+            valor="${linea#*=}"
+
+            # Allowlist only. No eval, no envsubst — see the input's comment.
+            valor="${valor//\$\{GITHUB_SHA_SHORT\}/${GITHUB_SHA::7}}"
+            valor="${valor//\$\{GITHUB_SHA\}/${GITHUB_SHA}}"
+            valor="${valor//\$\{GITHUB_REF_NAME\}/${GITHUB_REF_NAME}}"
+            valor="${valor//\$\{GITHUB_RUN_ID\}/${GITHUB_RUN_ID}}"
+            valor="${valor//\$\{GITHUB_RUN_NUMBER\}/${GITHUB_RUN_NUMBER}}"
+
+            # Anything still unexpanded is either a typo or an attempt to read
+            # something outside the allowlist. Both must fail loudly: silently
+            # emitting the literal text would ship a broken value, and silently
+            # expanding it could ship a secret.
+            case "$valor" in
+              *'${'*)
+                echo "::error::${var} contains an unsupported placeholder: '${valor}'. Allowed: \${GITHUB_SHA}, \${GITHUB_SHA_SHORT}, \${GITHUB_REF_NAME}, \${GITHUB_RUN_ID}, \${GITHUB_RUN_NUMBER}. Secrets go in build_env_map, never here."
+                exit 1
+                ;;
+            esac
+
+            echo "${var}=${valor}" >> "$GITHUB_ENV"
+            echo "Literal ${var}=${valor}"
+          done <<< "$BUILD_ENV_LITERAL"
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
