@@ -85,9 +85,25 @@ on:
       index_file:
         type: string
         default: "index.html"
+      # COUPLED TO node_version — do not bump one without checking the other.
+      #
+      # app-misfin's first real deploy died here. The pin said 17 (last release
+      # 17.38.1, December 2024, `engines.node >=18.14.0`) while node_version had
+      # been raised to 22 to match the quality gate. The range technically
+      # allowed it, so nothing warned: a CLI released twenty months and ten
+      # major versions before that runtime simply fell over, after a build that
+      # had already succeeded.
+      #
+      # The lesson is not "pin harder". It is that `engines` is the author's
+      # guess about the future, and a permissive lower bound says nothing about
+      # a runtime that did not exist yet. When node_version moves, verify the
+      # CLI actually supports it — `npm view netlify-cli@<v> engines`.
+      #
+      # 27.x declares `>=22.13.0`, so it states support for 22 rather than
+      # merely permitting it. Flags verified identical: --prod, --dir, --message.
       netlify_cli_version:
         type: string
-        default: "17"
+        default: "27"
 
       environment_name:
         type: string
