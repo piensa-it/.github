@@ -6,12 +6,42 @@ name: Reusable — E2E (Playwright)
 # build is Vite, Next, or anything else. Change stack -> change the map in the
 # wrapper, not here.
 #
-# Preserves misfin's honest skip: if Playwright isn't installed or a required
-# secret is empty, the job skips with a notice instead of failing red.
+# ---------------------------------------------------------------------------
+# 2026-08-12 — `required_secret` was removed. Read this before adding it back.
+# ---------------------------------------------------------------------------
+#
+# This workflow used to skip itself — with a green tick — in two situations:
+# an empty `required_secret`, or `@playwright/test` missing from package.json.
+# The intent was kind: a repo without secrets would fail every test on config
+# rather than on a real defect, and that trains people to ignore red.
+#
+# The cure was worse. On 2026-08-10 both e2e jobs in app-misfin PR #22 reported
+# success in six and nine seconds — less time than installing Playwright takes,
+# let alone running it. A secret had been renamed during the migration to the
+# standard names, the condition went false, every step skipped, and the job
+# finished green. For weeks each PR carried an "end-to-end tests passed" stamp
+# that meant nothing.
+#
+# An annoying red gets investigated. A false green gets nobody's attention.
+#
+# So skipping is now a decision the caller writes down: `e2e_enabled: false` in
+# its own wrapper, where whoever opens the repo can see it. Everything else —
+# a missing secret, an absent Playwright — is a red with an `::error::` naming
+# exactly what is missing. A newly-adopted repo without its secrets configured
+# SHOULD be red: that is the standard telling it what it still needs.
+#
+# See app-misfin/docs/quality-gate.md for the full incident.
 
 on:
   workflow_call:
     inputs:
+      # The only way to not run E2E. It lives in the caller's file, so it is
+      # read where the decision belongs instead of being inferred from the
+      # absence of a secret three repositories away.
+      e2e_enabled:
+        description: "Set to false ONLY for repos with no E2E suite. Write down why, next to it."
+        type: boolean
+        default: true
       node_version:
         type: string
         default: "22"
@@ -24,14 +54,19 @@ on:
       # Newline-separated BUILD_VAR=STANDARD_NAME pairs, e.g.
       #   VITE_SUPABASE_URL=BACKEND_URL
       #   VITE_SUPABASE_PUBLISHABLE_KEY=BACKEND_PUBLIC_KEY
+      #
+      # Every var mapped here is REQUIRED. There is no optional tier on
+      # purpose: if a variable is not needed to run the suite, do not map it.
+      # An optional tier is how "it will be configured later" becomes
+      # "it was never configured".
       build_env_map:
         type: string
         default: ""
-      # If this standard secret is empty, skip e2e (config, not a real failure).
-      required_secret:
-        type: string
-        default: "BACKEND_URL"
     secrets:
+      # Declared for callers that pass secrets explicitly (least privilege).
+      # Callers that need to map any other name use `secrets: inherit`; the
+      # mapping step reads from `toJSON(secrets)`, so both styles work without
+      # this file having to know every project's variables.
       PACKAGES_TOKEN:
         required: false
       BACKEND_URL:
@@ -49,14 +84,19 @@ concurrency:
 jobs:
   e2e:
     name: Playwright
+    # Disabled explicitly by the caller. The job does not appear as a green
+    # tick — it does not appear at all, which is the honest rendering of
+    # "this repo has no E2E".
+    if: inputs.e2e_enabled
     runs-on: ubuntu-latest
     env:
-      # Standard secrets exposed to the job; the map step re-exports them under
-      # the build's expected names.
-      BACKEND_URL: ${{ secrets.BACKEND_URL }}
-      BACKEND_PUBLIC_KEY: ${{ secrets.BACKEND_PUBLIC_KEY }}
       NPM_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
     steps:
+      # Third-party actions pinned to a 40-char commit SHA (not a mutable tag).
+      # A tag like @v6 can be re-pointed by the action owner without notice,
+      # enabling supply-chain attacks (Semgrep rule: mutable-action-tag).
+      # Dependabot bumps the SHA via the `# vX.Y.Z` comment.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -64,57 +104,84 @@ jobs:
           node-version: ${{ inputs.node_version }}
           cache: npm
 
-      - name: Check prerequisites
-        id: check
-        env:
-          REQUIRED_SECRET: ${{ inputs.required_secret }}
+      # Was a silent skip. Now a red: if the caller says it has E2E and the
+      # dependency is not declared, that is a broken repo, not a valid state.
+      - name: Verify Playwright is declared
         run: |
           set -euo pipefail
           if ! node -e "const p=require('./package.json');process.exit((p.devDependencies?.['@playwright/test']||p.dependencies?.['@playwright/test'])?0:1)"; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::@playwright/test not in package.json; skipping E2E."
-            exit 0
+            echo "::error::e2e_enabled is true but @playwright/test is not in package.json. Install it (npm i -D @playwright/test), or set e2e_enabled: false in this repo's wrapper and write down why."
+            exit 1
           fi
-          # Indirect lookup of the required standard secret's value
-          val="${!REQUIRED_SECRET:-}"
-          if [ -z "$val" ]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::$REQUIRED_SECRET is empty; skipping E2E."
-            exit 0
-          fi
-          echo "ready=true" >> "$GITHUB_OUTPUT"
 
+      # Reads values out of `toJSON(secrets)` rather than named `secrets.X`
+      # expressions, because the map's right-hand side is a string chosen by
+      # the caller and cannot be resolved at expression time. This is what
+      # makes the map genuinely parametric: a new project variable is a line
+      # in the wrapper, never a PR against this repository.
       - name: Map standard secrets to build env vars
-        if: steps.check.outputs.ready == 'true'
         env:
           BUILD_ENV_MAP: ${{ inputs.build_env_map }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
         run: |
           set -euo pipefail
-          # For each BUILD_VAR=STANDARD_NAME, write BUILD_VAR=<value of STANDARD_NAME>
-          # into $GITHUB_ENV so later steps (build/e2e) see the build's names.
-          while IFS= read -r line; do
-            [ -z "$line" ] && continue
-            build_var="${line%%=*}"
-            std_name="${line#*=}"
-            std_value="${!std_name:-}"
-            echo "${build_var}=${std_value}" >> "$GITHUB_ENV"
+          faltan=0
+
+          while IFS= read -r linea; do
+            linea="$(echo "$linea" | tr -d '[:space:]')"
+            [ -z "$linea" ] && continue
+
+            case "$linea" in
+              *=*) ;;
+              *)
+                echo "::error::build_env_map has a malformed line: '$linea'. Expected BUILD_VAR=STANDARD_SECRET."
+                exit 1
+                ;;
+            esac
+
+            build_var="${linea%%=*}"
+            std_name="${linea#*=}"
+            valor="$(jq -r --arg k "$std_name" '.[$k] // ""' <<< "$SECRETS_JSON")"
+
+            if [ -z "$valor" ]; then
+              # One annotation per missing secret, each naming the secret AND
+              # the build variable it feeds. "Some secret is missing" costs an
+              # hour of opening settings pages; this costs none. They are
+              # collected rather than fatal-on-first so one run reports all of
+              # them instead of one per push.
+              echo "::error::Missing secret ${std_name} (feeds ${build_var}). Set it in Settings → Secrets and variables → Actions."
+              faltan=$((faltan + 1))
+              continue
+            fi
+
+            # A newline inside a build variable is a paste accident every time.
+            # Rejecting it beats silently truncating the value into a bundle
+            # that then fails at runtime for an unrelated-looking reason.
+            if [ "$(printf '%s' "$valor" | wc -l)" -gt 0 ]; then
+              echo "::error::Secret ${std_name} contains a line break. Build variables must be single-line; re-paste the value without a trailing newline."
+              exit 1
+            fi
+
+            echo "${build_var}=${valor}" >> "$GITHUB_ENV"
             echo "Mapped ${build_var} <- ${std_name}"
           done <<< "$BUILD_ENV_MAP"
 
+          if [ "$faltan" -gt 0 ]; then
+            echo "::error::${faltan} secret(s) required by E2E are missing (listed above). If this repo genuinely has no E2E suite, set e2e_enabled: false in its wrapper instead of leaving the secrets empty."
+            exit 1
+          fi
+
       - name: Install dependencies
-        if: steps.check.outputs.ready == 'true'
         run: ${{ inputs.install_command }}
 
       - name: Install Chromium
-        if: steps.check.outputs.ready == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E
-        if: steps.check.outputs.ready == 'true'
         run: ${{ inputs.e2e_command }}
 
       - name: Upload Playwright report on failure
-        if: failure() && steps.check.outputs.ready == 'true'
+        if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: playwright-report

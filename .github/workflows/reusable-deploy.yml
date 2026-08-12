@@ -1,0 +1,331 @@
+name: Reusable — Deploy (Netlify)
+
+# The standard Piensa IT production deploy. Consumed by a thin wrapper in each
+# repo, the same shape as the quality gate: the standard lives here, the repo
+# declares its reality. See docs/DEPLOY.md for scope, rollback and adoption.
+#
+# Extracted from app-misfin on 2026-08-12, after Netlify was unlinked from Git
+# (2026-08-11) and the build moved into Actions. Netlify now receives compiled
+# files and nothing else.
+#
+# What that change buys: the commit that passes the quality gate is the commit
+# that ships, built with the same Node and the same lockfile. With two systems
+# building separately it was possible — and it happened in other projects — for
+# CI to be green while production broke on an environment difference.
+#
+# ---------------------------------------------------------------------------
+# The four protections, and the failure that bought each one
+# ---------------------------------------------------------------------------
+#
+#  1. Verify the Netlify credentials BEFORE installing or building.
+#     The first run had an invalid token and said so at the end, after two
+#     minutes of build, as `Unauthorized: could not retrieve site` — a message
+#     that cannot distinguish "the token is bad" from "the site does not exist".
+#
+#  2. Verify the build variables reached the BUNDLE, not merely that they were
+#     set. Vite freezes them into the JS at build time. If one is empty it
+#     substitutes an empty string and emits a perfectly valid bundle that dies
+#     on load with `supabaseUrl is required`. Build green, deploy green, site
+#     blank. It shipped and stayed up until somebody opened the page.
+#
+#  3. Refuse to publish an empty or index-less `dist`. Without this a broken
+#     build uploads anyway and takes the site down, because uploading zero
+#     files is a successful operation as far as the CLI is concerned.
+#
+#  4. Fail with an `::error::` that NAMES the missing secret. A generic error
+#     from a third-level tool costs an hour of opening settings pages.
+#
+# `build_env_map` is the input that matters. It is what differs in every
+# project and what caused every one of the four consecutive failed deploys on
+# 2026-08-11 — never the publish step, never the CLI.
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Must match the quality gate's node_version. If they differ, the commit that was tested is not the commit that ships."
+        type: string
+        default: "22"
+      install_command:
+        type: string
+        default: "npm ci"
+      build_command:
+        type: string
+        default: "npm run build"
+
+      # Newline-separated BUILD_VAR=STANDARD_SECRET pairs, e.g.
+      #   VITE_SUPABASE_URL=BACKEND_URL
+      build_env_map:
+        type: string
+        default: ""
+
+      # BUILD_VAR names (one per line) without which the app cannot start.
+      # Empty -> `::error::` and the deploy stops before installing anything.
+      # Anything mapped but NOT listed here only warns: it degrades a feature
+      # rather than breaking boot, and blocking a deploy on it would train
+      # people to bypass the gate.
+      required_build_vars:
+        type: string
+        default: ""
+
+      # BUILD_VAR names whose value must literally appear inside the compiled
+      # output. A different question from "is the secret set": it verifies the
+      # value reached the product. List only public values here.
+      bundle_assert_vars:
+        type: string
+        default: ""
+      bundle_assert_include:
+        description: "grep --include pattern for the compiled files to search"
+        type: string
+        default: "*.js"
+
+      publish_dir:
+        type: string
+        default: "dist"
+      index_file:
+        type: string
+        default: "index.html"
+      netlify_cli_version:
+        type: string
+        default: "17"
+
+      environment_name:
+        type: string
+        default: "production"
+      environment_url:
+        type: string
+        default: ""
+
+      requires_packages_token:
+        type: boolean
+        default: true
+
+    secrets:
+      # Callers whose build_env_map references a non-standard name must use
+      # `secrets: inherit` — the mapping step reads `toJSON(secrets)`, so a new
+      # project variable is a line in the wrapper, never a PR against this repo.
+      NETLIFY_AUTH_TOKEN:
+        required: false
+      NETLIFY_SITE_ID:
+        required: false
+      PACKAGES_TOKEN:
+        required: false
+      BACKEND_URL:
+        required: false
+      BACKEND_PUBLIC_KEY:
+        required: false
+
+permissions:
+  contents: read
+  packages: read
+
+# Two merges in quick succession: the second waits for the first instead of
+# racing it. Simultaneous deploys can land out of order and leave production
+# sitting on the older commit.
+concurrency:
+  group: deploy-${{ github.repository }}-${{ inputs.environment_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
+      url: ${{ inputs.environment_url }}
+
+    steps:
+      # Third-party actions pinned to a 40-char commit SHA (not a mutable tag).
+      # A tag can be re-pointed by its owner at any moment onto new code that
+      # then runs inside this job with access to the secrets. That is how
+      # `tj-actions/changed-files` was compromised in 2025. A SHA cannot be
+      # re-pointed; Dependabot bumps it via the `# vX.Y.Z` comment.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # --- PROTECTION 1 + 4 — credentials, checked first and named ----------
+      - name: Verify Netlify credentials
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ]; then
+            echo "::error::Missing secret NETLIFY_AUTH_TOKEN. Generate it at app.netlify.com/user/applications → Personal access tokens."
+            exit 1
+          fi
+          if [ -z "${NETLIFY_SITE_ID:-}" ]; then
+            echo "::error::Missing secret NETLIFY_SITE_ID. It is the site's UUID (Site configuration → General → Site ID), not a token and not the site name."
+            exit 1
+          fi
+
+          codigo=$(curl -sS -o /tmp/netlify-site.json -w "%{http_code}" \
+            -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" \
+            "https://api.netlify.com/api/v1/sites/${NETLIFY_SITE_ID}")
+
+          case "$codigo" in
+            200)
+              echo "Site: $(jq -r '.name' /tmp/netlify-site.json)"
+              ;;
+            401)
+              echo "::error::NETLIFY_AUTH_TOKEN is invalid or expired. Generate a new one at app.netlify.com/user/applications."
+              exit 1
+              ;;
+            403)
+              echo "::error::NETLIFY_AUTH_TOKEN is valid but lacks access to site ${NETLIFY_SITE_ID}. Check the token owner belongs to the site's team."
+              exit 1
+              ;;
+            404)
+              echo "::error::NETLIFY_SITE_ID does not match any site. It must be the site's UUID, not its name and not a token."
+              exit 1
+              ;;
+            *)
+              echo "::error::The Netlify API answered $codigo while checking the credentials. If this is 5xx it is theirs, not yours — re-run."
+              exit 1
+              ;;
+          esac
+
+      # --- PROTECTION 4 — every config error surfaces here, in seconds ------
+      # Deliberately BEFORE install and build. app-misfin's original validated
+      # the variables inside the build step, so a missing secret cost a full
+      # npm ci first. Config is knowable without compiling anything.
+      - name: Map standard secrets to build env vars
+        env:
+          BUILD_ENV_MAP: ${{ inputs.build_env_map }}
+          REQUIRED_BUILD_VARS: ${{ inputs.required_build_vars }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: |
+          set -euo pipefail
+
+          requeridas="$(echo "$REQUIRED_BUILD_VARS" | tr -d '[:blank:]' | grep -v '^$' || true)"
+          faltan=0
+
+          esta_requerida() {
+            printf '%s\n' "$requeridas" | grep -qxF -- "$1"
+          }
+
+          while IFS= read -r linea; do
+            linea="$(echo "$linea" | tr -d '[:space:]')"
+            [ -z "$linea" ] && continue
+
+            case "$linea" in
+              *=*) ;;
+              *)
+                echo "::error::build_env_map has a malformed line: '$linea'. Expected BUILD_VAR=STANDARD_SECRET."
+                exit 1
+                ;;
+            esac
+
+            build_var="${linea%%=*}"
+            std_name="${linea#*=}"
+            valor="$(jq -r --arg k "$std_name" '.[$k] // ""' <<< "$SECRETS_JSON")"
+
+            if [ -z "$valor" ]; then
+              if esta_requerida "$build_var"; then
+                echo "::error::Missing secret ${std_name} (feeds ${build_var}). Without it the app builds fine and then fails to start. Set it in Settings → Secrets and variables → Actions."
+                faltan=$((faltan + 1))
+              else
+                echo "::warning::${std_name} is empty (feeds ${build_var}). The deploy continues; the feature depending on it will be inactive."
+              fi
+              continue
+            fi
+
+            if [ "$(printf '%s' "$valor" | wc -l)" -gt 0 ]; then
+              echo "::error::Secret ${std_name} contains a line break. Build variables must be single-line; re-paste the value without a trailing newline."
+              exit 1
+            fi
+
+            echo "${build_var}=${valor}" >> "$GITHUB_ENV"
+            echo "Mapped ${build_var} <- ${std_name}"
+          done <<< "$BUILD_ENV_MAP"
+
+          if [ "$faltan" -gt 0 ]; then
+            echo "::error::${faltan} required build variable(s) are missing (listed above). Nothing was built and nothing was published."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      # The repo's versioned .npmrc already points @piensa-it at GitHub Packages
+      # and resolves the token from `${PACKAGES_TOKEN}`. Only the variable is
+      # passed here: writing a second .npmrc from the workflow would create two
+      # sources of truth that drift apart.
+      - name: Install dependencies
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.requires_packages_token }}" = "true" ] && [ -z "${PACKAGES_TOKEN:-}" ]; then
+            echo "::error::Missing secret PACKAGES_TOKEN (a PAT with read:packages). Note it is needed in Settings → Secrets → Actions AND, separately, in Settings → Secrets → Dependabot."
+            exit 1
+          fi
+          ${{ inputs.install_command }}
+
+      - name: Build
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: ${{ inputs.build_command }}
+
+      # --- PROTECTIONS 2 + 3 -----------------------------------------------
+      - name: Verify the build output
+        env:
+          PUBLISH_DIR: ${{ inputs.publish_dir }}
+          INDEX_FILE: ${{ inputs.index_file }}
+          BUNDLE_ASSERT_VARS: ${{ inputs.bundle_assert_vars }}
+          INCLUDE_PATTERN: ${{ inputs.bundle_assert_include }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "${PUBLISH_DIR}/${INDEX_FILE}" ]; then
+            echo "::error::${PUBLISH_DIR}/${INDEX_FILE} does not exist: the build produced nothing publishable. Nothing was uploaded."
+            exit 1
+          fi
+
+          archivos=$(find "$PUBLISH_DIR" -type f | wc -l)
+          if [ "$archivos" -lt 2 ]; then
+            echo "::error::${PUBLISH_DIR} contains ${archivos} file(s). A build with an index and no assets is a broken build, not a small site."
+            exit 1
+          fi
+
+          fallos=0
+          while IFS= read -r nombre; do
+            nombre="$(echo "$nombre" | tr -d '[:space:]')"
+            [ -z "$nombre" ] && continue
+
+            valor="$(printenv "$nombre" 2>/dev/null || true)"
+            if [ -z "$valor" ]; then
+              echo "::warning::${nombre} is listed in bundle_assert_vars but is not set, so it cannot be asserted."
+              continue
+            fi
+
+            # Bundlers routinely rewrite the scheme; the host is the stable part.
+            aguja="${valor#https://}"
+            aguja="${aguja#http://}"
+
+            if grep -rqF --include="$INCLUDE_PATTERN" -- "$aguja" "$PUBLISH_DIR"; then
+              echo "Present in the bundle: ${nombre}"
+            else
+              echo "::error::The value of ${nombre} does not appear in the compiled output (${PUBLISH_DIR}, ${INCLUDE_PATTERN}). The build did not pick up the environment variables; the published app would start blank. Nothing was uploaded."
+              fallos=$((fallos + 1))
+            fi
+          done <<< "$BUNDLE_ASSERT_VARS"
+
+          if [ "$fallos" -gt 0 ]; then
+            exit 1
+          fi
+
+          echo "Files to publish: ${archivos}"
+
+      - name: Publish to Netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes netlify-cli@${{ inputs.netlify_cli_version }} deploy \
+            --prod \
+            --dir="${{ inputs.publish_dir }}" \
+            --message "${GITHUB_SHA::7} — ${GITHUB_REF_NAME} (GitHub Actions)"

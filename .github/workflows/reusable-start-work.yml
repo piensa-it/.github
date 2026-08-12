@@ -104,22 +104,27 @@ jobs:
             *)       cc="chore" ;;
           esac
 
+          # The body is built with printf rather than a heredoc on purpose.
+          # A heredoc body has to start at column 0 to avoid leading spaces in
+          # the output, and column 0 ends the YAML block scalar that `run: |`
+          # opened — which made this whole file unparseable. printf keeps every
+          # line inside the block's indentation.
+          cuerpo=$(printf '%s\n' \
+            '## Resumen' \
+            '' \
+            "Automated draft PR for issue #${ISSUE}." \
+            '' \
+            '## Issue relacionado' \
+            '' \
+            "Closes #${ISSUE}" \
+            '' \
+            '---' \
+            '> Draft creado automáticamente. Invoca el agente con `/claude` en el issue' \
+            "> para implementar, o desarrolla manualmente en la rama \`${BRANCH}\`.")
+
           gh pr create \
             --draft \
             --base main \
             --head "$BRANCH" \
             --title "${cc}: ${TITLE}" \
-            --body "$(cat <<EOF
-## Resumen
-
-Automated draft PR for issue #${ISSUE}.
-
-## Issue relacionado
-
-Closes #${ISSUE}
-
----
-> Draft creado automáticamente. Invoca el agente con \`/claude\` en el issue
-> para implementar, o desarrolla manualmente en la rama \`${BRANCH}\`.
-EOF
-)"
+            --body "$cuerpo"
