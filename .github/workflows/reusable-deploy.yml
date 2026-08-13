@@ -131,6 +131,19 @@ on:
         type: string
         default: ""
 
+      # Post-deploy smoke test. A green publish only means the CLI uploaded
+      # files; this confirms the site actually answers. Requires
+      # environment_url — skipped (with a warning) when it is empty.
+      #
+      # It is an HTTP check, not a browser: it catches SERVER-side breakage
+      # (wrong URL, empty/misplaced dist, hashed assets 404ing, CDN down) —
+      # the classes of "blank page" a bundle assertion cannot see. It does
+      # NOT catch a purely client-side runtime crash; that is what
+      # bundle_assert_vars is for. The two are complementary.
+      smoke_test:
+        type: boolean
+        default: true
+
       requires_packages_token:
         type: boolean
         default: true
@@ -432,3 +445,65 @@ jobs:
             --prod \
             --dir="${{ inputs.publish_dir }}" \
             --message "${GITHUB_SHA::7} — ${GITHUB_REF_NAME} (GitHub Actions)"
+
+      # --- Post-deploy smoke test ------------------------------------------
+      # Publishing is not the same as serving. This is the check that would
+      # have caught a production site pointing at the wrong domain, or serving
+      # an index whose hashed assets 404 (a blank page). See the input comment
+      # for what it does and does not cover.
+      - name: Smoke test the deployed URL
+        if: ${{ inputs.smoke_test && inputs.environment_url != '' }}
+        env:
+          URL: ${{ inputs.environment_url }}
+        run: |
+          set -euo pipefail
+
+          # CDN propagation after an atomic deploy is usually instant but not
+          # guaranteed; retry before calling it a failure.
+          intentos=6
+          espera=5
+          codigo=000
+          for i in $(seq 1 "$intentos"); do
+            codigo=$(curl -sSL -o /tmp/smoke.html -w "%{http_code}" --max-time 20 "$URL" || echo 000)
+            [ "$codigo" = "200" ] && break
+            echo "Attempt ${i}/${intentos}: ${URL} answered ${codigo}; retrying in ${espera}s."
+            sleep "$espera"
+          done
+
+          if [ "$codigo" != "200" ]; then
+            echo "::error::Smoke test failed: ${URL} answered HTTP ${codigo} after ${intentos} attempts. The publish uploaded files but the site is not serving. Roll back (see docs/DEPLOY.md)."
+            exit 1
+          fi
+
+          if ! grep -qi "</html>" /tmp/smoke.html; then
+            echo "::error::Smoke test failed: ${URL} returned 200 but the body is not a complete HTML document (no </html>). Roll back (see docs/DEPLOY.md)."
+            exit 1
+          fi
+
+          # Follow the first referenced script and confirm it loads AS
+          # JavaScript. When a SPA's hashed assets 404, the fallback returns
+          # index.html (200, text/html) here — the browser gets HTML where it
+          # expects JS and the page is blank. Caught without a browser.
+          base="${URL%/}"
+          asset=$(grep -oiE 'src="[^"]+\.js"' /tmp/smoke.html | head -1 | sed -E 's/^src="//I; s/"$//' || true)
+          if [ -n "${asset:-}" ]; then
+            case "$asset" in
+              http*) asset_url="$asset" ;;
+              /*)    asset_url="${base}${asset}" ;;
+              *)     asset_url="${base}/${asset}" ;;
+            esac
+            respuesta=$(curl -sSL -o /dev/null -w "%{http_code} %{content_type}" --max-time 20 "$asset_url" || echo "000 -")
+            estado="${respuesta%% *}"
+            ctype="${respuesta#* }"
+            case "$estado:$ctype" in
+              200:*javascript*|200:*ecmascript*)
+                echo "Asset OK: ${asset_url} (${ctype})" ;;
+              *)
+                echo "::error::Smoke test failed: first script ${asset_url} answered '${respuesta}' (expected 200 + a JavaScript content-type). Hashed assets are 404ing and the page will be blank. Roll back (see docs/DEPLOY.md)."
+                exit 1 ;;
+            esac
+          else
+            echo "::warning::Smoke test: no <script src=...js> found in the HTML to verify; checked the document only."
+          fi
+
+          echo "Smoke test passed: ${URL} serves 200 and its first script loads as JavaScript."
