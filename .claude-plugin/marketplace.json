@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "piensa-it",
+  "description": "Plugins de Claude Code de Piensa IT: convenciones y recetas compartidas por todos los repositorios de la organización.",
+  "owner": {
+    "name": "Piensa IT",
+    "email": "andres.montoya@piensait.com"
+  },
+  "plugins": [
+    {
+      "name": "piensa-web",
+      "description": "Web pública de los productos de Piensa IT: landing con la firma «by Piensa IT», receta visual, SEO por página y prerenderizado de SPAs React.",
+      "source": "./plugins/piensa-web",
+      "category": "development",
+      "author": { "name": "Piensa IT" }
+    }
+  ]
+}
