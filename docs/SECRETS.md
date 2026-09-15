@@ -18,6 +18,15 @@ framework change.
 | `BACKEND_PUBLIC_KEY`  | Backend publishable/anon key (public)      | per-repo     |
 | `PAYMENTS_PUBLIC_KEY` | Payment processor publishable key (public) | per-repo     |
 | `ERROR_TRACKING_DSN`  | Error tracker ingest DSN (public)          | per-repo     |
+| `DATABASE_INGEST_URL` | Connection string of a least-privilege DB role that writes the app's own schema (**server-only**) | per-repo |
+| `SOURCE_CONTROL_WEBHOOK_SECRET` | HMAC secret that signs source-control webhooks (**server-only**) | per-repo |
+| `SOURCE_CONTROL_TOKEN` | Read-only source-control API token for server-side sync jobs (**server-only**) | per-repo |
+
+The three **server-only** names must never appear on the right-hand side of a
+`build_env_map` for a frontend build. They are read at runtime by server code
+(functions, scheduled jobs) and set in the hosting provider's runtime
+environment, or passed to a job that runs server-side. `bundle_assert_vars`
+must never list them.
 
 ### Which scope, and why
 
