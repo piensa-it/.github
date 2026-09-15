@@ -21,6 +21,17 @@ on:
         type: string
         default: ""
 
+      # When true, allowlist the Supabase anon (publishable) key in BOTH
+      # scanners. That key is public by design — it ships in the client bundle
+      # and is protected by RLS — so every Supabase repo hits the same false
+      # positives. Gitleaks keeps a SURGICAL, anon-only allowlist (a leaked
+      # service_role key still fails the gate); Semgrep's generic
+      # detected-jwt-token rule is excluded because Gitleaks stays the
+      # authoritative secret scanner. See docs/SECURITY.md.
+      allow_supabase_anon:
+        type: boolean
+        default: false
+
 permissions:
   contents: read
   pull-requests: read
@@ -46,10 +57,41 @@ jobs:
           gitleaks version
 
       - name: Run Gitleaks
+        env:
+          ALLOW_SUPABASE_ANON: ${{ inputs.allow_supabase_anon }}
         run: |
           set -euo pipefail
-          # Auto-detects .gitleaks.toml at repo root if present.
+
+          # By default Gitleaks auto-detects .gitleaks.toml at the repo root.
+          config_args=""
+
+          if [ "$ALLOW_SUPABASE_ANON" = "true" ]; then
+            # Supabase anon (publishable) keys are public by design: they ship
+            # in the client bundle, protected by RLS. This allowlist matches
+            # ONLY role=anon Supabase JWTs — the base64 fragment
+            # Iiwicm9sZSI6ImFub24i decodes to "\",\"role\":\"anon\"" and is
+            # constant across projects (a Supabase ref is always 20 chars, so
+            # the alignment never shifts). A leaked service_role key encodes
+            # differently and STAYS flagged. Verified against the gitleaks
+            # binary (anon allowlisted, service_role still detected).
+            {
+              echo 'title = "piensa baseline (supabase anon allowlist)"'
+              echo '[extend]'
+              if [ -f .gitleaks.toml ]; then
+                # Keep the repo's own config; layer the allowlist on top.
+                echo "path = \"$PWD/.gitleaks.toml\""
+              else
+                echo 'useDefault = true'
+              fi
+              echo '[allowlist]'
+              echo 'description = "Supabase anon (publishable) key — public by design, protected by RLS"'
+              echo 'regexes = ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\\.[A-Za-z0-9_-]*Iiwicm9sZSI6ImFub24i"]'
+            } > /tmp/gitleaks-baseline.toml
+            config_args="--config /tmp/gitleaks-baseline.toml"
+          fi
+
           gitleaks detect --source . --no-banner --redact --exit-code 1 \
+            $config_args \
             --report-format sarif --report-path gitleaks.sarif
 
       - name: Upload SARIF report
@@ -65,10 +107,28 @@ jobs:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      # Pinned by digest (not the mutable `latest`/`:tag`) for the same
+      # supply-chain reason every action here is SHA-pinned: a tag can be
+      # re-pointed onto new code that runs inside this job. Bump by resolving
+      # the digest of a newer version:
+      #   TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:semgrep/semgrep:pull" | jq -r .token)
+      #   curl -sI -H "Authorization: Bearer $TOKEN" \
+      #     -H "Accept: application/vnd.oci.image.index.v1+json" \
+      #     https://registry-1.docker.io/v2/semgrep/semgrep/manifests/<version> | grep -i docker-content-digest
+      image: semgrep/semgrep@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b # 1.172.0
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Run Semgrep
-        run: semgrep ci ${{ inputs.semgrep_configs }} ${{ inputs.semgrep_exclude_rules }}
         env:
           SEMGREP_RULES: p/default
+          SEMGREP_EXCLUDE_RULES: ${{ inputs.semgrep_exclude_rules }}
+          ALLOW_SUPABASE_ANON: ${{ inputs.allow_supabase_anon }}
+        run: |
+          set -euo pipefail
+          excludes="${SEMGREP_EXCLUDE_RULES:-}"
+          if [ "$ALLOW_SUPABASE_ANON" = "true" ]; then
+            # Supabase anon key is public by design; Gitleaks stays
+            # authoritative for real secrets (incl. service_role).
+            excludes="$excludes --exclude-rule=generic.secrets.security.detected-jwt-token.detected-jwt-token"
+          fi
+          semgrep ci ${{ inputs.semgrep_configs }} $excludes
