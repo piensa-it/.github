@@ -23,3 +23,9 @@
 - [ ] Consola sin errores de hidratación; formularios y menús funcionan.
 - [ ] Contraste AA, foco visible, `aria-label` en botones de icono.
 - [ ] Tras desplegar: `curl` al dominio público confirma contenido y etiquetas por ruta.
+
+## CI
+- [ ] Wrapper `.github/workflows/public-web.yml` desde `piensa-it/.github/templates/public-web.yml`
+      (`mode: dist` en cada PR como check requerido, `mode: url` tras el deploy).
+- [ ] Probar antes en local con el mismo script:
+      `node <ruta a piensa-github>/scripts/public-web/check.mjs --dist dist --routes "/,/precios/" --client-routes "/docs/"`.

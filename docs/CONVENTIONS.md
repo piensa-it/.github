@@ -134,3 +134,32 @@ A spec contains:
 - Dependency and secret scanning run on every PR.
 - No workflow runs untrusted code from forks with access to secrets.
 - The principle of least privilege applies to every token and workflow permission.
+
+## 9. Public web
+
+Every product with a public website (landing, pricing, public docs) presents
+itself the same way and is readable without JavaScript.
+
+- **Product signature.** The product name leads, followed by the Piensa IT
+  isotype at signature size and «by Piensa IT» in small monospaced caps. Also in
+  the footer credit and in `<title>` / `og:title` («<Page> · <Product> by Piensa
+  IT»). No «Beta» pill in its place. Each product keeps its own colors, fonts and
+  tone.
+- **SEO per page.** Each public route has its own `<title>`, meta description,
+  canonical and Open Graph tags, plus `sitemap.xml` and `robots.txt`.
+- **HTML that arrives built.** Crawlers other than Google, AI bots and the link
+  previews of WhatsApp, LinkedIn and Slack do not run JavaScript. Static sites
+  already comply; a React SPA must **prerender** its public routes. Routes that
+  are rendered in the browser on purpose (API docs, the logged-in app) are
+  declared as such and keep their tags.
+- **Enforced in CI.** `reusable-public-web.yml` blocks the PR when a public page
+  ships an empty root, a missing or duplicated title, or missing tags, and checks
+  the production domain again after deploy (see
+  [`QUALITY_GATE.md`](./QUALITY_GATE.md#public-web--reusable-public-webyml)).
+- **How to build it.** The Claude Code plugin `piensa-web` (skill
+  `landing-piensa`) in this repository carries the visual recipe, the signature,
+  the prerendering files proven in production (app-deliver) and the checklist:
+  `claude plugin marketplace add piensa-it/.github && claude plugin install piensa-web@piensa-it`.
+- **Stack.** Do not change stack for SEO. Prerender the existing SPA; consider
+  Astro only when there is a content strategy (blog, guides) or the landings are
+  being unified, and then in the same repository as the code it shares.

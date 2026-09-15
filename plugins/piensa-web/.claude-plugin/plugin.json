@@ -1,6 +1,6 @@
 {
   "name": "piensa-web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Web pública de los productos de Piensa IT: landing con la firma «by Piensa IT», receta visual, SEO por página y prerenderizado de SPAs React.",
   "author": { "name": "Piensa IT" },
   "homepage": "https://github.com/piensa-it/.github",

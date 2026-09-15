@@ -57,6 +57,7 @@ so the standard lives in one place and every project inherits the same bar.
 | SAST            | Semgrep (`p/default p/typescript p/react`) | **Blocking**              |
 | Dependency audit| `npm audit --omit=dev`                | **Blocking** (high+)           |
 | E2E             | Playwright                            | **Blocking** unless `e2e_enabled: false` |
+| Public web      | `reusable-public-web.yml` (repos with a public site) | **Blocking** on PR; re-checked on the production domain after deploy |
 
 Deploy previews per PR are currently not part of the gate: they would require
 passing secrets to builds of pull requests, which is deliberately out of scope
@@ -99,6 +100,45 @@ bypass the gate; letting a boot-critical one through publishes a blank page.
 `bundle_assert_vars` lists the variables whose value must literally appear in
 the compiled output. This is a different question from "is the secret set", and
 it is the one that matters: it verifies the value reached the product.
+
+## Public web — `reusable-public-web.yml`
+
+Applies to every repository that publishes a public website. It answers the
+question a green build cannot: **what does a page look like to someone who does
+not run JavaScript?** Google renders JavaScript late and not always; other
+search engines, AI crawlers and the link previews of WhatsApp, LinkedIn and
+Slack do not run it at all. A React SPA serves them `<div id="root"></div>` and
+the same title on every route, so a product link shared in a chat shows nothing
+useful.
+
+The check (`scripts/public-web/check.mjs`, no dependencies) reads each route
+exactly as those clients do and fails with one `::error::` per problem:
+
+| Rule | Why |
+| ---- | --- |
+| Content routes ship visible text and no empty `#root` | The page must exist without JavaScript |
+| `<title>` present, unique across routes and containing «by Piensa IT» | Every page is findable on its own and signed like the rest of the family |
+| Meta description (≤ ~160 chars), canonical, `og:title`, `og:description` | Search snippets and link previews |
+| `sitemap.xml` (with `<urlset>`) and `robots.txt` pointing to it | Discovery |
+| Unreachable route = error | Not running is not passing (principle 4) |
+
+Two modes, same script:
+
+- **`mode: dist`** on every PR: installs, runs the build that prerenders
+  (`npm run build:web` in React SPAs) and checks `publish_dir`. Make it a
+  required status check.
+- **`mode: url`** after the production deploy: checks the real domain, because
+  hosting rules (redirects, trailing slashes, a catch-all serving the SPA shell)
+  can undo a correct build.
+
+The wrapper declares the routes: `routes` must ship content; `client_routes`
+are rendered in the browser on purpose (Scalar API docs, the logged-in app) and
+only their tags are checked. Disabling the signature (`signature: ""`) is only
+acceptable with a sentence in the wrapper explaining why. Template:
+[`templates/public-web.yml`](../templates/public-web.yml). How to make a site
+pass: the `landing-piensa` skill of the `piensa-web` Claude Code plugin.
+
+Reference: `app-deliver` passes in both modes (2026-09-15).
 
 ## Versioning of the reusable workflows
 

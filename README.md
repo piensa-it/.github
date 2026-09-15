@@ -22,7 +22,7 @@ claude plugin install piensa-web@piensa-it
 
 | Plugin | Qué trae |
 |---|---|
-| `piensa-web` | Skill `landing-piensa`: web pública de los productos (firma «by Piensa IT», receta visual, SEO por página, prerenderizado de SPAs React). Se activa sola al trabajar una landing, precios, SEO o vistas previas de enlaces. |
+| `piensa-web` | Skill `landing-piensa` (en CI la acompaña `reusable-public-web.yml`): web pública de los productos (firma «by Piensa IT», receta visual, SEO por página, prerenderizado de SPAs React). Se activa sola al trabajar una landing, precios, SEO o vistas previas de enlaces. |
 
 Para actualizar: `claude plugin marketplace update piensa-it` y reiniciar la sesión.
 

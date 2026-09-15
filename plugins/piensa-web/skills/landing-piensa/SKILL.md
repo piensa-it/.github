@@ -76,4 +76,7 @@ producción en Deliver): cópialos y adapta lo marcado con `ADAPTAR`. Resumen de
    En el navegador: consola sin errores de hidratación y lo interactivo funcionando.
 4. No hagas commit ni publiques sin mostrar las capturas al dueño, salvo que ya lo haya autorizado.
 
+5. Deja el chequeo en CI: wrapper de `reusable-public-web.yml` (plantilla `templates/public-web.yml` de
+   `piensa-it/.github`), que bloquea el PR si una página pública llega vacía o sin sus etiquetas.
+
 Checklist final en `references/checklist.md`.

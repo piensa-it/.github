@@ -1,0 +1,53 @@
+# Public web — wrapper for a product with a public website.
+#
+# Copy to .github/workflows/public-web.yml and adjust the routes. It checks that
+# every public page ships real HTML and its own <title>, description, canonical
+# and Open Graph tags, without JavaScript (how Google, AI crawlers and WhatsApp /
+# LinkedIn / Slack previews read it). See docs/QUALITY_GATE.md ("Public web").
+#
+# - `check` runs on every PR and blocks the merge (make it a required check).
+# - `production` runs after a deploy to main, against the real domain.
+#   If your deploy workflow is separate, call this job from it with `needs:` on
+#   the publish job instead of `workflow_run`.
+
+name: Public web
+
+on:
+  pull_request:
+  workflow_run:
+    workflows: ["Deploy"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    uses: piensa-it/.github/.github/workflows/reusable-public-web.yml@v1
+    with:
+      mode: dist
+      # Same Node and install command as quality-gate.yml and deploy.yml.
+      node_version: "22"
+      install_command: "npm ci"
+      # SPA React + Vite: the build that prerenders (see the landing-piensa skill).
+      # Static HTML sites: any build that copies the pages into publish_dir.
+      build_command: "npm run build:web"
+      publish_dir: "dist"
+      routes: "/, /precios/"
+      # Rendered in the browser on purpose (Scalar docs, logged-in app): tags only.
+      client_routes: "/docs/"
+      requires_packages_token: true
+    secrets:
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+
+  production:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    uses: piensa-it/.github/.github/workflows/reusable-public-web.yml@v1
+    with:
+      mode: url
+      base_url: "https://<product>.piensait.com"
+      routes: "/, /precios/"
+      client_routes: "/docs/"
