@@ -63,6 +63,14 @@ Deploy previews per PR are currently not part of the gate: they would require
 passing secrets to builds of pull requests, which is deliberately out of scope
 while the repositories are being stabilised.
 
+### Package manager
+
+`package_manager` accepts `npm` (default) or `pnpm`. With `pnpm`, the version is
+read from `packageManager` in `package.json`, the dependency cache switches to
+the pnpm store, and lint/typecheck run as `pnpm run …`. The install, coverage and
+build commands are already inputs; set them to their pnpm equivalents. Any other
+value fails the job rather than silently falling back to npm (principle 4).
+
 ## Deploy — `reusable-deploy.yml`
 
 Production deploys run through the same wrapper pattern as the gate. Netlify no

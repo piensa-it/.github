@@ -27,6 +27,10 @@ jobs:
     with:
       # AJUSTAR — la MISMA que en deploy.yml. Ver el comentario de allí.
       node_version: "22"
+      # AJUSTAR — npm o pnpm. Con pnpm la versión sale de `packageManager` en
+      # package.json y los comandos de abajo pasan a `pnpm install
+      # --frozen-lockfile`, `pnpm run test:coverage`, `pnpm run build`.
+      package_manager: "npm"
       install_command: "npm ci"
 
       # AJUSTAR — arranca en false SOLO si hay errores preexistentes, y entonces
