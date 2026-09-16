@@ -1,0 +1,10 @@
+{
+  "name": "piensa-backlog",
+  "version": "0.1.0",
+  "description": "Backlog de Piensa IT en GitHub: descomponer una feature en épica e historias de usuario (sub-issues) y agregarlas al Project v2 del equipo con Status y Size, igual en todos los repos.",
+  "author": { "name": "Piensa IT" },
+  "homepage": "https://github.com/piensa-it/.github",
+  "repository": "https://github.com/piensa-it/.github",
+  "license": "UNLICENSED",
+  "keywords": ["backlog", "historias-de-usuario", "github-projects", "piensa-it"]
+}

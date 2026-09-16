@@ -1,0 +1,10 @@
+{
+  "name": "piensa-rollout",
+  "version": "0.1.0",
+  "description": "Despliegues (rollouts) de los repositorios de Piensa IT con una sola práctica: pruebas completas en Docker una vez por release, constancia firmada, ≤ 3 minutos de GitHub Actions, verificación en producción y reversión documentada.",
+  "author": { "name": "Piensa IT" },
+  "homepage": "https://github.com/piensa-it/.github",
+  "repository": "https://github.com/piensa-it/.github",
+  "license": "UNLICENSED",
+  "keywords": ["deploy", "rollout", "release", "github-actions", "netlify", "piensa-it"]
+}
