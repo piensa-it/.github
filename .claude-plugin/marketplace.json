@@ -12,7 +12,18 @@
       "description": "Web pública de los productos de Piensa IT: landing con la firma «by Piensa IT», receta visual, SEO por página y prerenderizado de SPAs React.",
       "source": "./plugins/piensa-web",
       "category": "development",
-      "author": { "name": "Piensa IT" }
+      "author": {
+        "name": "Piensa IT"
+      }
+    },
+    {
+      "name": "piensa-rollout",
+      "description": "Despliegues de Piensa IT: pruebas en Docker una vez por release con constancia, ≤ 3 min de Actions, verificación en producción y reversión.",
+      "source": "./plugins/piensa-rollout",
+      "category": "development",
+      "author": {
+        "name": "Piensa IT"
+      }
     }
   ]
 }
