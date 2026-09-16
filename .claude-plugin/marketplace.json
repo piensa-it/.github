@@ -24,6 +24,15 @@
       "author": {
         "name": "Piensa IT"
       }
+    },
+    {
+      "name": "piensa-backlog",
+      "description": "Backlog en GitHub: épicas e historias de usuario como sub-issues en el Project v2 del equipo, con Status y Size.",
+      "source": "./plugins/piensa-backlog",
+      "category": "productivity",
+      "author": {
+        "name": "Piensa IT"
+      }
     }
   ]
 }
