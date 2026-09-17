@@ -21,8 +21,9 @@ framework change.
 | `DATABASE_INGEST_URL` | Connection string of a least-privilege DB role that writes the app's own schema (**server-only**) | per-repo |
 | `SOURCE_CONTROL_WEBHOOK_SECRET` | HMAC secret that signs source-control webhooks (**server-only**) | per-repo |
 | `SOURCE_CONTROL_TOKEN` | Read-only source-control API token for server-side sync jobs (**server-only**) | per-repo |
+| `SOURCE_CONTROL_WRITE_TOKEN` | Source-control API token that may **create** issues, for a product that files them on a person's behalf (**server-only**) | per-repo |
 
-The three **server-only** names must never appear on the right-hand side of a
+The four **server-only** names must never appear on the right-hand side of a
 `build_env_map` for a frontend build. They are read at runtime by server code
 (functions, scheduled jobs) and set in the hosting provider's runtime
 environment, or passed to a job that runs server-side. `bundle_assert_vars`
@@ -43,6 +44,26 @@ product's production. The blast radius of getting it wrong is what decides.
 Only public/publishable values belong in build-time frontend vars. Never place
 server secrets (service_role keys, private API keys) in `BACKEND_*` — those are
 not exposed to the browser and must not be baked into a frontend build.
+
+### Read and write are two secrets, never one
+
+`SOURCE_CONTROL_TOKEN` and `SOURCE_CONTROL_WRITE_TOKEN` name the same API and
+must hold different credentials, because what they touch is not the same thing.
+
+A sync job reads **every issue of every project** — that breadth is what makes
+it useful and what makes write access on it unacceptable: a bug in a nightly
+loop would have the reach to rewrite a whole backlog. A product that files an
+issue on someone's behalf touches **one issue, the one it just created**, and
+needs write to do it.
+
+Merging them gives the nightly job the narrow credential's power over
+everything the broad one can see. Keeping them apart costs one extra token and
+removes that combination entirely.
+
+The write token stays as narrow as the feature allows: create issues, nothing
+else. A product that creates them should not also edit, close or comment on
+them — that is someone else's work happening somewhere the repository is
+actually checked out.
 
 ## How mapping works (in each repo's wrapper)
 
@@ -99,6 +120,41 @@ or tracker becomes one line on the left-hand side of one map.
 Adding a genuinely new standard name to this table is a small PR against this
 repository, and that friction is doing useful work: it is what keeps the
 vocabulary short enough to stay a standard.
+
+## Name the credential after the secret it fills
+
+The names in the table say what a value *is*, never which tool consumes it.
+That is the right trade for code, and it has a cost the day you rotate:
+`SOURCE_CONTROL_TOKEN` does not exist anywhere in GitHub's own token list. What
+exists there is a label somebody typed, and matching one to the other becomes a
+thing you have to remember.
+
+So carry the standard name into the label, at the place the credential is
+created:
+
+```
+atalaya · SOURCE_CONTROL_TOKEN
+atalaya · SOURCE_CONTROL_WRITE_TOKEN
+misfin · SOURCE_CONTROL_TOKEN
+```
+
+Product first, because one account holds credentials for all of them; standard
+name second, because that is the string you will be searching for. Rotating
+then starts with a search that succeeds in both places, instead of a guess.
+
+This applies wherever the value is born and carries a free-form label —
+fine-grained tokens, Netlify personal access tokens, database roles. A label is
+not a secret and is not validated by anything, so renaming one costs nothing
+and breaks nothing.
+
+Two things that are easy to get wrong when you do rotate a fine-grained token:
+
+- **Editing its permissions does not change its value.** Only *Regenerate
+  token* does, and the new value is shown once.
+- **Projects live on the organization, not the repository.** A token given
+  `Issues: read` but not the organization's `Projects: read` will read issues
+  perfectly and return empty boards — which looks like missing data, not like a
+  permission problem, and is usually noticed much later.
 
 ## Every secret has to be set in more than one place
 
