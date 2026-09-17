@@ -129,18 +129,21 @@ That is the right trade for code, and it has a cost the day you rotate:
 exists there is a label somebody typed, and matching one to the other becomes a
 thing you have to remember.
 
-So carry the standard name into the label, at the place the credential is
+So label the credential with the standard name, exactly, at the place it is
 created:
 
 ```
-atalaya · SOURCE_CONTROL_TOKEN
-atalaya · SOURCE_CONTROL_WRITE_TOKEN
-misfin · SOURCE_CONTROL_TOKEN
+SOURCE_CONTROL_TOKEN
+SOURCE_CONTROL_WRITE_TOKEN
 ```
 
-Product first, because one account holds credentials for all of them; standard
-name second, because that is the string you will be searching for. Rotating
-then starts with a search that succeeds in both places, instead of a guess.
+Exactly, not approximately: the point is that one search string finds the same
+thing in the repo and in the provider's list. `atalaya-reconcile` is a fine
+name for a token and a useless one for this, because it appears nowhere else.
+
+Add the product as a prefix only once a second one would collide —
+`misfin · SOURCE_CONTROL_TOKEN` — and not before. A prefix nobody needs yet is
+one more thing to get subtly wrong.
 
 This applies wherever the value is born and carries a free-form label —
 fine-grained tokens, Netlify personal access tokens, database roles. A label is
